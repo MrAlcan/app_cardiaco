@@ -8,7 +8,7 @@ from app.services.serviciosSonido import ServiciosSonido
 from app.services.serviciosUsuario import ServiciosUsuario
 #
 
-from flask import Blueprint, render_template, request, jsonify
+from flask import Blueprint, render_template, request, jsonify, make_response
  
 #from app.routes.conexion import db, cursor
 from flask import Flask, request, jsonify
@@ -45,13 +45,35 @@ def _get_access_token():
 
 FCM_URL = "https://fcm.googleapis.com/v1/projects/freqcard/messages:send"
 
-def send_fcm_notification(device_token, title, body, data=None):
+def send_fcm_notification(device_token, title, body, frecuencia = 0, normal=True):
     headers = {
         "Authorization": 'Bearer ' + _get_access_token(),
         "Content-Type": "application/json"
     }
+
+    # Se arma el mensaje base con el token
+    message = {"token": device_token}
     
-    payload = {
+    if normal:
+        # Enviar mensaje data-only para actualización en tiempo real
+        message["data"] = {
+            "heart_rate": str(frecuencia)
+        }
+    else:
+        # Enviar mensaje con notificación para alerta (frecuencia anormal)
+        message["notification"] = {
+            "title": title,
+            "body": body
+        }
+        # Si se desea, se puede incluir además el dato en el campo data
+        message["data"] = {
+            "heart_rate": str(frecuencia)
+        }
+    
+    payload = {"message": message}
+    
+    
+    '''payload = {
         "message": {
             "token" : device_token,
             "notification": {
@@ -60,7 +82,7 @@ def send_fcm_notification(device_token, title, body, data=None):
             }#,
             #"data": data or {}
         }
-    }
+    }'''
     try:
         response = requests.post(FCM_URL, headers=headers, json=payload)
         print('/*/*'*100)
@@ -251,22 +273,43 @@ def crear_usuario_app():
         
         carnet = datos.get("id")
         nombre = datos.get("name")
-        edad = int(datos.get("age"))
-        telefono = datos.get("rate")
+        edad = datos.get("age")
+        nombreTutor = datos.get("rate")
+        carnetTutor = datos.get("nombreTutor")
+        telefonoTutor = datos.get("carnetTutor")
+        correoTutor = datos.get("telefonoTutor")
+        contrasena = datos.get("correoTutor")
+        rate = datos.get("contrasena")
 
         hoy = datetime.today()
 
         # Restar los años de la edad a la fecha de hoy
-        fecha_nacimiento = hoy.replace(year=hoy.year - edad)
+        #fecha_nacimiento = hoy.replace(year=hoy.year - edad)
 
         # Verificar si ya pasó el cumpleaños este año
         # Si la fecha de nacimiento es después de la fecha actual, restamos un año adicional
-        if hoy.month < fecha_nacimiento.month or (hoy.month == fecha_nacimiento.month and hoy.day < fecha_nacimiento.day):
-            fecha_nacimiento = fecha_nacimiento.replace(year=hoy.year - edad - 1)
+        #if hoy.month < fecha_nacimiento.month or (hoy.month == fecha_nacimiento.month and hoy.day < fecha_nacimiento.day):
+        #    fecha_nacimiento = fecha_nacimiento.replace(year=hoy.year - edad - 1)
 
-        fecha_nacimiento = fecha_nacimiento.strftime('%Y-%m-%d')
+        #fecha_nacimiento = fecha_nacimiento.strftime('%Y-%m-%d')
 
-        paciente = ServiciosPaciente.crear(1, fecha_nacimiento, 0, nombre, carnet)
+        fecha_nacimiento = datetime.strptime(edad, "%d/%m/%Y")
+        fecha_nacimiento = fecha_nacimiento.strftime("%Y-%m-%d")
+
+        print(nombreTutor)
+        print(correoTutor)
+        print(carnetTutor)
+        print(telefonoTutor)
+        print(contrasena)
+        
+
+        usuario_nuevo = ServiciosUsuario.crear(nombreTutor, correoTutor, carnetTutor, telefonoTutor, contrasena, 2)
+
+        usuario_tutor = ServiciosUsuario.obtener_por_carnet(carnetTutor)
+
+        id_usuario = usuario_tutor['id_usuario']
+
+        paciente = ServiciosPaciente.crear(id_usuario, fecha_nacimiento, 0, nombre, carnet)
 
         
 
@@ -749,7 +792,7 @@ def set_latido():
     print(id_user) # ------------------------------------ POSIBLE CARNET
     #date_object = datetime.strptime(fecha, "%a %b %d %H:%M:%S GMT%z %Y")
 
-    paciente = ServiciosPaciente.obtener_por_carnet(id_user)
+    paciente = ServiciosPaciente.obtener_por_id(id_user)
     id_pac = paciente['id_paciente']
 
     frecuencia = ServiciosFrecuencia.crear(id_pac, 0, 10, latido)
@@ -778,10 +821,17 @@ def set_latido():
             print(token_user)
             titulo = "Frecuencia Alta Detectada"
             cuerpo = f"Frecuencia detectada de {latido} bpm"
-            result = send_fcm_notification(token_user, titulo, cuerpo)
+            result = send_fcm_notification(token_user, titulo, cuerpo, latido, False)
             return jsonify(result), 200
         else:
             return jsonify({'message':'No hay token'}), 400
+    else:
+        id_enc = paciente['id_encargado']
+        usuario = ServiciosUsuario.obtener_id(id_enc)
+        if usuario:
+            token_user = usuario['token']
+            result = send_fcm_notification(token_user, '', '', latido, True)
+            return jsonify(result), 200
 
 
 
@@ -816,7 +866,7 @@ def send_not():
         titulo = title
         cuerpo = description
         result = ''
-        result = send_fcm_notification(token_user, titulo, cuerpo)
+        result = send_fcm_notification(token_user, titulo, cuerpo, 0, True)
         return jsonify(result), 200
     else:
         return jsonify({'message':'No hay token'}), 200
@@ -910,12 +960,14 @@ def set_sonido():
         print(token_user)
         titulo = "Ruido Molesto Detectado"
         cuerpo = f"Alerta de {sonido}, cerca del paciente"
-        result = send_fcm_notification(token_user, titulo, cuerpo)
+        result = send_fcm_notification(token_user, titulo, cuerpo, 0, False)
         return jsonify(result), 200
     else:
         return jsonify({'message':'No hay token'}), 200
 
     return jsonify({'message': 'Registrado Satisfactoriamente'}), 200
+
+
 
 @routes.route('/obtener_paciente', methods=['POST'])
 def obtener_paciente():
@@ -924,6 +976,10 @@ def obtener_paciente():
     print(id_usuario)
 
     pacientes_lista = ServiciosPaciente.obtener_por_carnet(id_usuario)
+
+    id_tutor = pacientes_lista['id_encargado']
+
+    tutor = ServiciosUsuario.obtener_id(id_tutor)
 
     '''cursor.execute("""
         SELECT * FROM paciente WHERE paciente.carnet = %s
@@ -935,11 +991,110 @@ def obtener_paciente():
         # Calcular la edad
     edad = today.year - fecha_nacimiento.year - ((today.month, today.day) < (fecha_nacimiento.month, fecha_nacimiento.day))
     pacientes_lista['edad'] = edad  
+
     cuerpo = {
         'id': pacientes_lista['id_paciente'],
         'age' : pacientes_lista['edad'],
         'name' : pacientes_lista['nombre'],
-        'rate' : pacientes_lista['carnet']
+        'rate' : pacientes_lista['carnet'],
+        'carnet': pacientes_lista['carnet'],
+        'fecha_nacimiento': pacientes_lista['fecha_nacimiento'].strftime("%d/%m/%Y")
     }
+    print("+*"*50)
+    print(cuerpo)
 
     return jsonify({'results' : [cuerpo]})
+
+
+
+from reportlab.pdfgen import canvas
+import io
+@routes.route('/generate_pdf', methods=['GET'])
+def generate_pdf():
+    id_paciente = request.args.get("id_paciente") # es ID no carnet
+    print(f"id_paciente: {id_paciente}")
+    # Crea un buffer en memoria para el PDF
+    buffer = io.BytesIO()
+    p = canvas.Canvas(buffer)
+    # Aquí defines el contenido del PDF
+    p.drawString(100, 750, "Este es tu reporte PDF generado con ReportLab")
+    p.drawString(100, 730, "¡Generado desde Flask!")
+    p.showPage()
+    p.save()
+    buffer.seek(0)
+    
+    # Configura la respuesta con los headers adecuados para PDF
+    response = make_response(buffer.read())
+    response.headers['Content-Type'] = 'application/pdf'
+    response.headers['Content-Disposition'] = 'attachment; filename=report.pdf'
+    return response
+
+
+
+@routes.route("/user/modificar_usuario", methods=["POST"])
+def crear_modificar_app():
+    
+        datos = request.get_json()
+
+        print('/*/'*100)
+        print(datos)
+        
+        id_pac = datos.get("id")
+        carnet = datos.get("carnet")
+        nombre = datos.get("nombre")
+        edad = datos.get("fecha")
+        '''nombreTutor = datos.get("rate")
+        carnetTutor = datos.get("nombreTutor")
+        telefonoTutor = datos.get("carnetTutor")
+        correoTutor = datos.get("telefonoTutor")
+        contrasena = datos.get("correoTutor")
+        rate = datos.get("contrasena")'''
+
+        hoy = datetime.today()
+
+        # Restar los años de la edad a la fecha de hoy
+        #fecha_nacimiento = hoy.replace(year=hoy.year - edad)
+
+        # Verificar si ya pasó el cumpleaños este año
+        # Si la fecha de nacimiento es después de la fecha actual, restamos un año adicional
+        #if hoy.month < fecha_nacimiento.month or (hoy.month == fecha_nacimiento.month and hoy.day < fecha_nacimiento.day):
+        #    fecha_nacimiento = fecha_nacimiento.replace(year=hoy.year - edad - 1)
+
+        #fecha_nacimiento = fecha_nacimiento.strftime('%Y-%m-%d')
+
+        fecha_nacimiento = datetime.strptime(edad, "%d/%m/%Y")
+        fecha_nacimiento = fecha_nacimiento.strftime("%Y-%m-%d")
+
+        
+        
+
+        
+
+
+
+        paciente = ServiciosPaciente.modificar(id=id_pac, encargado=None, nacimiento=fecha_nacimiento, tasa=0, nombre=nombre, carnet=carnet)
+
+        
+
+        '''if not re.match(r"[^@]+@[^@]+\.[^@]+", correo):    
+            return jsonify({"mensaje": "Correo electrónico inválido"}), 400
+
+        # Generar el hash de la contraseña antes de almacenarla
+        
+        usuario_nuevo = ServiciosUsuario.crear(nombre, correo, carnet, telefono, password, id_rol)'''
+
+        # Insertar el nuevo usuario con la contraseña hasheada
+        '''cursor.execute(
+            """
+            INSERT INTO usuario (nombre, correo, carnet, telefono, password, id_rol) 
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """, 
+            (nombre, correo, carnet, telefono, password, id_rol)
+        )
+        db.commit()'''
+
+        if paciente:
+
+            return jsonify({"mensaje": "Usuario agregado con éxito", "redirect": "/usuarios"}), 200
+        else:
+            return jsonify({"mensaje": "Error al agregar usuario"}), 500
